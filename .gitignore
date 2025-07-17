@@ -1,1 +1,3 @@
-unotest
+jails.json
+.build/
+bin/
