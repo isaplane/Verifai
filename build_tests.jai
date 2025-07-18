@@ -2,20 +2,18 @@ EXE_NAME :: "tests";
 
 build :: ()
 {
-    w := verifai.begin_test_workspace(EXE_NAME);
-
-    options := get_build_options(w);
-    options.output_path = tprint("%/bin", #filepath);
-    set_build_options(options, w);
-
-    verifai.end_test_workspace(w);
-
     set_build_options_dc(.{do_output = false});
+
+    set_working_directory(#filepath);
+    options := get_build_options();
+    options.output_path = "bin";
+    options.output_executable_name = EXE_NAME;
+
+    w := Verifai.build_test_workspace(options, "tests");
 }
 
 #run build();
 
 #import "Basic";
 #import "Compiler";
-verifai :: #import,file "./verifai.jai";
-
+Verifai :: #import,file "./Verifai.jai";
