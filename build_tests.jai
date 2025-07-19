@@ -16,4 +16,4 @@ build :: ()
 
 #import "Basic";
 #import "Compiler";
-Verifai :: #import,file "./Verifai.jai";
+Verifai :: #import "Verifai";
