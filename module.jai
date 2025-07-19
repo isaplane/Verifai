@@ -94,24 +94,49 @@ run_tests :: (tests: [] Test_Case)
     elapsed_time := to_milliseconds(t_stop - t_start, false);
 
     print("\nRan % tests in % ms.\n", tests.count, elapsed_time);
+    print_color("% passed, ", tests.count - num_failed, color = .GREEN);
+    print_color("% failed.\n", num_failed, color = .RED);
 }
 
-value_is_true :: (value: bool, $call := #caller_code)
-{
-    using context.test_case;
-
-    has_test = true;
-
-    if !value 
-    {
-        failed_expr = #run get_expression(call);
-        failed = true;
-    }
-}
-
-expression_is_true :: ($expr: Code, $call := #caller_code) #expand
+is_true :: ($expr: Code, $call := #caller_code) #expand
 {
     value := #insert expr;
+    value_is_true(value, call);
+}
+
+is_false :: ($expr: Code, $call := #caller_code) #expand
+{
+    value := !(#insert expr);
+    value_is_true(value, call);
+}
+
+are_equal :: ($actual: Code, $expected: Code, $call := #caller_code) #expand
+{
+    actual_value := #insert actual;
+    expected_value := #insert expected;
+
+    value := actual_value == expected_value;
+    value_is_true(value, call);
+}
+
+are_not_equal :: ($actual: Code, $expected: Code, $call := #caller_code) #expand
+{
+    actual_value := #insert actual;
+    expected_value := #insert expected;
+
+    value := actual_value != expected_value;
+    value_is_true(value, call);
+}
+
+is_null :: ($expr: Code, $call := #caller_code) #expand
+{
+    value := (#insert expr) == null;
+    value_is_true(value, call);
+}
+
+is_not_null :: ($expr: Code, $call := #caller_code) #expand
+{
+    value := (#insert expr) != null;
     value_is_true(value, call);
 }
 
@@ -130,6 +155,19 @@ Test_Case :: struct
 #add_context test_case: *Test_Case;
 
 #scope_module
+
+value_is_true :: (value: bool, $call := #caller_code)
+{
+    using context.test_case;
+
+    has_test = true;
+
+    if !value 
+    {
+        failed_expr = #run get_expression(call);
+        failed = true;
+    }
+}
 
 builder: String_Builder;
 
