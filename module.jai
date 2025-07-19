@@ -110,23 +110,23 @@ is_false :: ($expr: Code, $call := #caller_code) #expand
     value_is_true(value, call);
 }
 
-are_equal :: ($actual: Code, $expected: Code, $call := #caller_code) #expand
-{
-    actual_value := #insert actual;
-    expected_value := #insert expected;
-
-    value := actual_value == expected_value;
-    value_is_true(value, call);
-}
-
-are_not_equal :: ($actual: Code, $expected: Code, $call := #caller_code) #expand
-{
-    actual_value := #insert actual;
-    expected_value := #insert expected;
-
-    value := actual_value != expected_value;
-    value_is_true(value, call);
-}
+// are_equal :: ($actual: Code, $expected: Code, $call := #caller_code) #expand
+// {
+//     actual_value := #insert actual;
+//     expected_value := #insert expected;
+//
+//     value := actual_value == expected_value;
+//     value_is_true(value, call);
+// }
+//
+// are_not_equal :: ($actual: Code, $expected: Code, $call := #caller_code) #expand
+// {
+//     actual_value := #insert actual;
+//     expected_value := #insert expected;
+//
+//     value := actual_value != expected_value;
+//     value_is_true(value, call);
+// }
 
 is_null :: ($expr: Code, $call := #caller_code) #expand
 {
