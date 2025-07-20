@@ -1,4 +1,4 @@
-build_test_workspace :: (base_options: Build_Options, test_dir: string, loc := #caller_location)
+build_test_executable :: (base_options: Build_Options, test_dir: string, loc := #caller_location)
 {
     w := compiler_create_workspace("tests_workspace");
     assert(w > 0, "Bad workspace.\n");
@@ -7,16 +7,17 @@ build_test_workspace :: (base_options: Build_Options, test_dir: string, loc := #
     options.output_type = .EXECUTABLE;
     set_build_options(options, w);
 
-    init_string_builder(*builder);
-    test_files := find_test_files(test_dir);
-
     compiler_begin_intercept(w);
+
+    test_files := find_test_files(test_dir);
     for test_files add_build_file(it, w, loc);
 
+    builder: String_Builder;
+    init_string_builder(*builder);
     add_build_string(BUILD_STRING, w);
-    add_test_file_string(w, test_files);
+    add_test_file_string(test_files, builder, w);
 
-    message_loop();
+    message_loop(builder);
 
     compiler_end_intercept(w);
 }
@@ -169,8 +170,6 @@ value_is_true :: (value: bool, $call := #caller_code)
     }
 }
 
-builder: String_Builder;
-
 find_test_files :: (test_dir: string) -> [] string
 {
     files := file_list(test_dir);
@@ -179,7 +178,7 @@ find_test_files :: (test_dir: string) -> [] string
     return files;
 }
 
-add_test_file_string :: (w: Workspace, test_files: [] string)
+add_test_file_string :: (test_files: [] string, builder: String_Builder, w: Workspace)
 {
     print_to_builder(*builder, "test_files: [%] string = \n", test_files.count);
     print_to_builder(*builder, ".[\n");
@@ -190,10 +189,9 @@ add_test_file_string :: (w: Workspace, test_files: [] string)
     print_to_builder(*builder, "];\n");
 
     add_build_string(builder_to_string(*builder), w);
-    free_buffers(*builder);
 }
 
-add_test_string :: (w: Workspace, tests: [..] *Code_Procedure_Header)
+add_test_string :: (tests: [..] *Code_Procedure_Header, builder: String_Builder, w: Workspace)
 {
     print_to_builder(*builder, "tests: [%] Verifai.Test_Case = \n", tests.count);
     print_to_builder(*builder, ".[\n");
@@ -205,10 +203,9 @@ add_test_string :: (w: Workspace, tests: [..] *Code_Procedure_Header)
     print_to_builder(*builder, "];\n");
 
     add_build_string(builder_to_string(*builder), w);
-    free_buffers(*builder);
 }
 
-message_loop :: ()
+message_loop :: (builder: String_Builder)
 {
     test_headers: [..] *Code_Procedure_Header;
 
@@ -234,7 +231,7 @@ message_loop :: ()
                     case .TYPECHECKED_ALL_WE_CAN;
                         if test_headers.count == 0 continue;
 
-                        add_test_string(message.workspace, test_headers);
+                        add_test_string(test_headers, builder, message.workspace);
                         array_reset(*test_headers);
                 }
 

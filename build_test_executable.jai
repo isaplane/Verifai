@@ -1,4 +1,5 @@
 EXE_NAME :: "tests";
+TEST_DIR :: "tests";
 
 build :: ()
 {
@@ -9,7 +10,7 @@ build :: ()
     options.output_path = "bin";
     options.output_executable_name = EXE_NAME;
 
-    w := Verifai.build_test_workspace(options, "tests");
+    w := Verifai.build_test_executable(options, TEST_DIR);
 }
 
 #run build();
