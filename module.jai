@@ -1,25 +1,16 @@
 build_test_executable :: (base_options: Build_Options, test_dir: string, loc := #caller_location)
 {
-    w := compiler_create_workspace("tests_workspace");
-    assert(w > 0, "Bad workspace.\n");
-
     options := base_options;
     options.output_type = .EXECUTABLE;
-    set_build_options(options, w);
 
-    compiler_begin_intercept(w);
+    build_tests(options, test_dir, EXEC_STRING, loc);
+}
 
-    test_files := find_test_files(test_dir);
-    for test_files add_build_file(it, w, loc);
+build_and_run_tests :: (base_options: Build_Options, test_dir: string, loc := #caller_location)
+{
+    set_build_options_dc(.{do_output = false});
 
-    builder: String_Builder;
-    init_string_builder(*builder);
-    add_build_string(BUILD_STRING, w);
-    add_test_file_string(test_files, builder, w);
-
-    message_loop(builder);
-
-    compiler_end_intercept(w);
+    build_tests(base_options, test_dir, RUN_STRING, loc);
 }
 
 print_test_info :: (files: [] string, num_tests: int)
@@ -157,6 +148,25 @@ Test_Case :: struct
 
 #scope_module
 
+build_tests :: (options: Build_Options, test_dir: string, build_str: string, loc: Source_Code_Location)
+{
+    w := compiler_create_workspace("tests_workspace");
+    assert(w > 0, "Bad workspace.\n");
+
+    set_build_options(options, w);
+    compiler_begin_intercept(w);
+
+    test_files := find_test_files(test_dir);
+    for test_files add_build_file(it, w, loc);
+
+    builder: String_Builder;
+    add_build_string(build_str, w);
+    add_build_string(create_test_file_string(test_files, builder), w);
+
+    message_loop(builder);
+    compiler_end_intercept(w);
+}
+
 value_is_true :: (value: bool, $call := #caller_code)
 {
     using context.test_case;
@@ -178,7 +188,7 @@ find_test_files :: (test_dir: string) -> [] string
     return files;
 }
 
-add_test_file_string :: (test_files: [] string, builder: String_Builder, w: Workspace)
+create_test_file_string :: (test_files: [] string, builder: String_Builder) -> string
 {
     print_to_builder(*builder, "test_files: [%] string = \n", test_files.count);
     print_to_builder(*builder, ".[\n");
@@ -188,10 +198,10 @@ add_test_file_string :: (test_files: [] string, builder: String_Builder, w: Work
     }
     print_to_builder(*builder, "];\n");
 
-    add_build_string(builder_to_string(*builder), w);
+    return builder_to_string(*builder);
 }
 
-add_test_string :: (tests: [..] *Code_Procedure_Header, builder: String_Builder, w: Workspace)
+create_test_string :: (tests: [] *Code_Procedure_Header, builder: String_Builder) -> string
 {
     print_to_builder(*builder, "tests: [%] Verifai.Test_Case = \n", tests.count);
     print_to_builder(*builder, ".[\n");
@@ -202,7 +212,7 @@ add_test_string :: (tests: [..] *Code_Procedure_Header, builder: String_Builder,
     }
     print_to_builder(*builder, "];\n");
 
-    add_build_string(builder_to_string(*builder), w);
+    return builder_to_string(*builder);
 }
 
 message_loop :: (builder: String_Builder)
@@ -215,28 +225,27 @@ message_loop :: (builder: String_Builder)
         if message.kind ==
         {
             case .TYPECHECKED;
-                typechecked := cast(*Message_Typechecked) message;
+            typechecked := cast(*Message_Typechecked) message;
 
-                for tc: typechecked.procedure_headers
-                {
-                    proc := tc.expression;
-                    if has_note(proc, "Test")
-                        array_add(*test_headers, proc);
-                }
+            for tc: typechecked.procedure_headers
+            {
+                proc := tc.expression;
+                if has_note(proc, "Test")
+                    array_add(*test_headers, proc);
+            }
 
             case .PHASE;
-                phase := cast(*Message_Phase) message;
-                if phase.phase ==
-                {
-                    case .TYPECHECKED_ALL_WE_CAN;
-                        if test_headers.count == 0 continue;
+            phase := cast(*Message_Phase) message;
+            if phase.phase ==
+            {
+                case .TYPECHECKED_ALL_WE_CAN;
+                if test_headers.count == 0 continue;
 
-                        add_test_string(test_headers, builder, message.workspace);
-                        array_reset(*test_headers);
-                }
+                add_build_string(create_test_string(test_headers, builder), message.workspace);
+                test_headers.count = 0;
+            }
 
-            case .COMPLETE;
-                break;
+            case .COMPLETE; break;
         }
     }
 }
@@ -265,7 +274,7 @@ prepend_indents :: (str: string, num_indents: int) -> string
     return builder_to_string(*builder);
 }
 
-BUILD_STRING :: #string
+EXEC_STRING :: #string
 HERE
 #import "Basic";
 
@@ -273,6 +282,16 @@ main :: ()
 {
     Verifai.print_test_info(test_files, tests.count);
     Verifai.run_tests(tests);
+}
+HERE
+
+RUN_STRING :: #string
+HERE
+#run
+{
+    #import "Verifai";
+    print_test_info(test_files, tests.count);
+    run_tests(tests);
 }
 HERE
 
