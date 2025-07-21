@@ -15,31 +15,29 @@ build_and_run_tests :: (base_options: Build_Options, test_dir: string, loc := #c
 
 print_test_info :: (files: [] string, num_tests: int)
 {
-    print("Found % files with % tests.\n\n", files.count, num_tests);
+    print("\nFound % files with % tests.\n\n", files.count, num_tests);
     print("Included files:\n");
     for files print(prepend_indents(tprint("- %\n", it), 1));
 }
 
-print_test_output :: (test: Test_Case, indent_count: int)
+print_passed_test_output :: (test: Test_Case, indent_count: int)
 {
-    if !test.has_test
-    {
-        print_color(prepend_indents("skip: ", indent_count), color = .YELLOW); 
-        print("%\n", test.name);
-        print(prepend_indents("Missing a test expression!\n", indent_count + 1));
-        return;
-    }
-
-    if test.failed
-    {
-        print_color(prepend_indents("fail: ", indent_count), color = .RED); 
-        print("%\n", test.name);
-        print(prepend_indents(tprint("Failing expression (line %): %\n", test.location.line_number, test.failed_expr), indent_count + 1));
-        return;
-    }
-
     print_color(prepend_indents("pass: ", indent_count), color = .GREEN);
     print("%\n", test.name);
+}
+
+print_failed_test_output :: (test: Test_Case, indent_count: int)
+{
+    print_color(prepend_indents("fail: ", indent_count), color = .RED); 
+    print("%\n", test.name);
+    print(prepend_indents(tprint("Failing expression (line %): %\n", test.location.line_number, test.failed_expr), indent_count + 1));
+}
+
+print_skipped_test_output :: (test: Test_Case, indent_count: int)
+{
+    print_color(prepend_indents("skip: ", indent_count), color = .YELLOW); 
+    print("%\n", test.name);
+    print(prepend_indents("Missing a test expression!\n", indent_count + 1));
 }
 
 run_tests :: (tests: [] Test_Case)
@@ -55,6 +53,7 @@ run_tests :: (tests: [] Test_Case)
     bubble_sort(tests, compare_test_cases);
 
     num_failed := 0;
+    num_skipped := 0;
     indent_count := 1;
     current_file := "";
 
@@ -78,7 +77,12 @@ run_tests :: (tests: [] Test_Case)
             current_file = path;
         }
 
-        print_test_output(it, indent_count);
+        if it.state ==
+        {
+            case .PASSED; print_passed_test_output (it, indent_count);
+            case .FAILED; print_failed_test_output (it, indent_count); num_failed  += 1;
+            case .UNRUN;  print_skipped_test_output(it, indent_count); num_skipped += 1;
+        }
     }
 
     t_stop := current_time_monotonic();
@@ -86,8 +90,9 @@ run_tests :: (tests: [] Test_Case)
     elapsed_time := to_milliseconds(t_stop - t_start, false);
 
     print("\nRan % tests in % ms.\n", tests.count, elapsed_time);
-    print_color("% passed, ", tests.count - num_failed, color = .GREEN);
-    print_color("% failed.\n", num_failed, color = .RED);
+    print_color("% ", tests.count - num_failed - num_skipped, color = .GREEN); print("passed, ");
+    print_color("% ", num_failed, color = .RED); print("failed, ");
+    print_color("% ", num_skipped, color = .YELLOW); print("skipped.\n\n");
 }
 
 is_true :: ($expr: Code, $call := #caller_code) #expand
@@ -139,14 +144,21 @@ Test_Case :: struct
 
     msg_buffer: = String_Builder.{ allocator = temp };
     location: Source_Code_Location;
-    has_test := false;
+
+    state: Test_State = .UNRUN;
 
     failed_expr: string;
-    failed := false;
 }
 #add_context test_case: *Test_Case;
 
 #scope_module
+
+Test_State :: enum
+{
+    UNRUN;
+    PASSED;
+    FAILED;
+}
 
 build_tests :: (options: Build_Options, test_dir: string, build_str: string, loc: Source_Code_Location)
 {
@@ -171,13 +183,15 @@ value_is_true :: (value: bool, $call := #caller_code)
 {
     using context.test_case;
 
-    has_test = true;
-
-    if !value 
+    if value 
     {
-        failed_expr = #run get_expression(call);
-        failed = true;
+        state = .PASSED;
+        return;
     }
+
+    failed_expr = #run get_expression(call);
+    state = .FAILED;
+    return;
 }
 
 find_test_files :: (test_dir: string) -> [] string
@@ -269,7 +283,7 @@ prepend_indents :: (str: string, num_indents: int) -> string
 {
     builder: String_Builder;
 
-    for 0..num_indents-1 print_to_builder(*builder, "\t");
+    for 0..num_indents-1 print_to_builder(*builder, "    ");
     print_to_builder(*builder, str);
     return builder_to_string(*builder);
 }
