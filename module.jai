@@ -20,29 +20,29 @@ print_test_info :: (files: [] string, num_tests: int)
     for files print(prepend_indents(tprint("- %\n", it), 1));
 }
 
-print_passed_test_output :: (test: Test_Case, indent_count: int)
+print_passed_test_output :: (test: Test, indent_count: int)
 {
     print_color(prepend_indents("pass: ", indent_count), color = .GREEN);
     print("%\n", test.name);
 }
 
-print_failed_test_output :: (test: Test_Case, indent_count: int)
+print_failed_test_output :: (test: Test, indent_count: int)
 {
     print_color(prepend_indents("fail: ", indent_count), color = .RED); 
     print("%\n", test.name);
     print(prepend_indents(tprint("Failing expression (line %): %\n", test.location.line_number, test.failed_expr), indent_count + 1));
 }
 
-print_skipped_test_output :: (test: Test_Case, indent_count: int)
+print_skipped_test_output :: (test: Test, indent_count: int)
 {
     print_color(prepend_indents("skip: ", indent_count), color = .YELLOW); 
     print("%\n", test.name);
     print(prepend_indents("Missing a test expression!\n", indent_count + 1));
 }
 
-run_tests :: (tests: [] Test_Case)
+run_tests :: (tests: [] Test)
 {
-    compare_test_cases :: (a: Test_Case, b: Test_Case) -> int
+    compare_test_cases :: (a: Test, b: Test) -> int
     {
         a_loc := a.location.fully_pathed_filename;
         b_loc := b.location.fully_pathed_filename;
@@ -137,10 +137,10 @@ is_not_null :: ($expr: Code, $call := #caller_code) #expand
     value_is_true(value, call);
 }
 
-Test_Case :: struct
+Test :: struct
 {
     name: string;
-    proc: #type ();
+    proc: #type () -> void;
 
     msg_buffer: = String_Builder.{ allocator = temp };
     location: Source_Code_Location;
@@ -148,8 +148,12 @@ Test_Case :: struct
     state: Test_State = .UNRUN;
 
     failed_expr: string;
+
+    is_parameterized: bool;
+    parameter_array_name: string;
+    parameter_index: int;
 }
-#add_context test_case: *Test_Case;
+#add_context test_case: *Test;
 
 #scope_module
 
@@ -158,6 +162,13 @@ Test_State :: enum
     UNRUN;
     PASSED;
     FAILED;
+}
+
+Param_Array_Info :: struct
+{
+    name: string;
+    count: int;
+    element_type: Type;
 }
 
 build_tests :: (options: Build_Options, test_dir: string, build_str: string, loc: Source_Code_Location)
@@ -215,14 +226,19 @@ create_test_file_string :: (test_files: [] string, builder: String_Builder) -> s
     return builder_to_string(*builder);
 }
 
-create_test_string :: (tests: [] *Code_Procedure_Header, builder: String_Builder) -> string
+create_test_string :: (tests: [] Test, builder: String_Builder) -> string
 {
-    print_to_builder(*builder, "tests: [%] Verifai.Test_Case = \n", tests.count);
+    print_to_builder(*builder, "tests: [%] Verifai.Test = \n", tests.count);
     print_to_builder(*builder, ".[\n");
     for tests
     {
-        print_to_builder(*builder, "    .{name = \"%\", proc = %, location = .{fully_pathed_filename = \"%\", line_number = %, character_number = %}},\n", 
-            it.name, it.name, it.enclosing_load.fully_pathed_filename, it.l0, it.c0);
+        if it.is_parameterized
+        {
+            print_to_builder(*builder, "    .{name = \"%\", proc = () => %(%[%]), location = .%},\n", it.name, it.name, it.parameter_array_name, it.parameter_index, it.location);
+            continue;
+        }
+
+        print_to_builder(*builder, "    .{name = \"%\", proc = () => %(), location = .%},\n", it.name, it.name, it.location);
     }
     print_to_builder(*builder, "];\n");
 
@@ -231,7 +247,8 @@ create_test_string :: (tests: [] *Code_Procedure_Header, builder: String_Builder
 
 message_loop :: (builder: String_Builder)
 {
-    test_headers: [..] *Code_Procedure_Header;
+    test_procs: [..] *Code_Procedure_Header;
+    param_arrs: [..] Param_Array_Info;
 
     while true
     {
@@ -241,11 +258,30 @@ message_loop :: (builder: String_Builder)
             case .TYPECHECKED;
             typechecked := cast(*Message_Typechecked) message;
 
+            for dc: typechecked.declarations
+            {
+                decl := dc.expression;
+                if decl.type_inst == null continue;
+
+                if (decl.flags & .IS_GLOBAL) &&
+                    (decl.type_inst.result.type == .ARRAY) &&
+                    (decl.type_inst.array_element_type.result.type == .STRUCT)
+                {
+                    arr_info := Param_Array_Info.{
+                        name = decl.name,
+                        count = decl.type_inst.result.(*Type_Info_Array).array_count,
+                        element_type = get_type(decl.type_inst.array_element_type.result)
+                    };
+                    array_add(*param_arrs, arr_info);
+                }
+            }
+
             for tc: typechecked.procedure_headers
             {
                 proc := tc.expression;
-                if has_note(proc, "Test")
-                    array_add(*test_headers, proc);
+                if !has_note(proc, "Test") continue;
+
+                array_add(*test_procs, proc);
             }
 
             case .PHASE;
@@ -253,13 +289,53 @@ message_loop :: (builder: String_Builder)
             if phase.phase ==
             {
                 case .TYPECHECKED_ALL_WE_CAN;
-                if test_headers.count == 0 continue;
+                if test_procs.count == 0 continue;
 
-                add_build_string(create_test_string(test_headers, builder), message.workspace);
-                test_headers.count = 0;
+                tests: [..] Test;
+
+                for proc: test_procs
+                {
+                    test := Test.{
+                        name = proc.name,
+                        location = .{
+                            fully_pathed_filename = proc.enclosing_load.fully_pathed_filename,
+                            line_number = proc.l0,
+                            character_number = proc.c0
+                        }
+                    };
+
+                    if proc.arguments.count > 0
+                    {
+                        add_parameterized_tests(proc, test, *tests, param_arrs);
+                    }
+                    else array_add(*tests, test);
+                }
+
+                add_build_string(create_test_string(tests, builder), message.workspace);
+                test_procs.count = 0;
             }
 
             case .COMPLETE; break;
+        }
+    }
+}
+
+add_parameterized_tests :: (proc: *Code_Procedure_Header, base_test: Test, tests: *[..] Test, param_arrs: [] Param_Array_Info)
+{
+    test_param_type := get_type(proc.arguments[0].type_inst.result);
+
+    for arr: param_arrs
+    {
+        if arr.element_type != test_param_type continue;
+
+        for 0..arr.count - 1
+        {
+            test := base_test;
+            test.is_parameterized = true;
+            test.parameter_array_name = arr.name;
+            test.parameter_index = it;
+
+            array_add(tests, test);
         }
     }
 }
