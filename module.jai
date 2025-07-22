@@ -13,49 +13,9 @@ build_and_run_tests :: (base_options: Build_Options, test_dir: string, loc := #c
     build_tests(base_options, test_dir, RUN_STRING, loc);
 }
 
-print_test_info :: (files: [] string, num_tests: int)
-{
-    print("\nFound % files with % tests.\n\n", files.count, num_tests);
-    print("Included files:\n");
-    for files print(prepend_indents(tprint("- %\n", it), 1));
-}
-
-print_passed_test_output :: (test: Test, indent_count: int)
-{
-    print_color(prepend_indents("pass: ", indent_count), color = .GREEN);
-    print("%\n", test.name);
-}
-
-print_failed_test_output :: (test: Test, indent_count: int)
-{
-    print_color(prepend_indents("fail: ", indent_count), color = .RED); 
-    print("%\n", test.name);
-    print(prepend_indents(tprint("Failing expression (line %): %\n", test.location.line_number, test.failed_expr), indent_count + 1));
-}
-
-print_skipped_test_output :: (test: Test, indent_count: int)
-{
-    print_color(prepend_indents("skip: ", indent_count), color = .YELLOW); 
-    print("%\n", test.name);
-    print(prepend_indents("Missing a test expression!\n", indent_count + 1));
-}
-
 run_tests :: (tests: [] Test)
 {
-    compare_test_cases :: (a: Test, b: Test) -> int
-    {
-        a_loc := a.location.fully_pathed_filename;
-        b_loc := b.location.fully_pathed_filename;
-
-        return compare_strings(a_loc, b_loc);
-    }
-
-    bubble_sort(tests, compare_test_cases);
-
-    num_failed := 0;
-    num_skipped := 0;
-    indent_count := 1;
-    current_file := "";
+    run_state := Test_Run_State.{indent_count = 1};
 
     t_start := current_time_monotonic();
 
@@ -71,28 +31,26 @@ run_tests :: (tests: [] Test)
         }
 
         path := it.location.fully_pathed_filename;
-        if path != current_file
+        if path != run_state.current_file
         {
+            flush_parameterized_test_cases(*run_state);
             print("\n%:\n", path);
-            current_file = path;
+            run_state.current_file = path;
         }
 
-        if it.state ==
+        if it.is_parameterized 
+            handle_parameterized_test_case(it, *run_state); 
+        else
         {
-            case .PASSED; print_passed_test_output (it, indent_count);
-            case .FAILED; print_failed_test_output (it, indent_count); num_failed  += 1;
-            case .UNRUN;  print_skipped_test_output(it, indent_count); num_skipped += 1;
+            flush_parameterized_test_cases(*run_state);
+            print_test_output(it, *run_state);
         }
     }
 
     t_stop := current_time_monotonic();
-
     elapsed_time := to_milliseconds(t_stop - t_start, false);
 
-    print("\nRan % tests in % ms.\n", tests.count, elapsed_time);
-    print_color("% ", tests.count - num_failed - num_skipped, color = .GREEN); print("passed, ");
-    print_color("% ", num_failed, color = .RED); print("failed, ");
-    print_color("% ", num_skipped, color = .YELLOW); print("skipped.\n\n");
+    print_test_summary(run_state, tests.count, elapsed_time);
 }
 
 is_true :: ($expr: Code, $call := #caller_code) #expand
@@ -162,6 +120,17 @@ Test_State :: enum
     UNRUN;
     PASSED;
     FAILED;
+}
+
+Test_Run_State :: struct
+{
+    num_failed: int;
+    num_skipped: int;
+    indent_count: int;
+    current_file: string;
+
+    param_test_cases: [..] Test;
+    param_test_name: string;
 }
 
 Param_Array_Info :: struct
@@ -234,7 +203,8 @@ create_test_string :: (tests: [] Test, builder: String_Builder) -> string
     {
         if it.is_parameterized
         {
-            print_to_builder(*builder, "    .{name = \"%\", proc = () => %(%[%]), location = .%},\n", it.name, it.name, it.parameter_array_name, it.parameter_index, it.location);
+            print_to_builder(*builder, "    .{name = \"%\", proc = () => %(%[%]), location = .%, is_parameterized = true, parameter_array_name = \"%\", parameter_index = %},\n",
+                it.name, it.name, it.parameter_array_name, it.parameter_index, it.location, it.parameter_array_name, it.parameter_index);
             continue;
         }
 
@@ -256,64 +226,78 @@ message_loop :: (builder: String_Builder)
         if message.kind ==
         {
             case .TYPECHECKED;
-            typechecked := cast(*Message_Typechecked) message;
+                typechecked := cast(*Message_Typechecked) message;
 
-            for dc: typechecked.declarations
-            {
-                decl := dc.expression;
-                if decl.type_inst == null continue;
-
-                if (decl.flags & .IS_GLOBAL) &&
-                    (decl.type_inst.result.type == .ARRAY) &&
-                    (decl.type_inst.array_element_type.result.type == .STRUCT)
+                for dc: typechecked.declarations
                 {
-                    arr_info := Param_Array_Info.{
-                        name = decl.name,
-                        count = decl.type_inst.result.(*Type_Info_Array).array_count,
-                        element_type = get_type(decl.type_inst.array_element_type.result)
-                    };
-                    array_add(*param_arrs, arr_info);
+                    decl := dc.expression;
+                    if decl.type_inst == null continue;
+
+                    if (decl.flags & .IS_GLOBAL) &&
+                        (decl.type_inst.result.type == .ARRAY) &&
+                        (decl.type_inst.array_element_type.result.type == .STRUCT)
+                    {
+                        arr_info := Param_Array_Info.{
+                            name = decl.name,
+                            count = decl.type_inst.result.(*Type_Info_Array).array_count,
+                            element_type = get_type(decl.type_inst.array_element_type.result)
+                        };
+                        array_add(*param_arrs, arr_info);
+                    }
                 }
-            }
 
-            for tc: typechecked.procedure_headers
-            {
-                proc := tc.expression;
-                if !has_note(proc, "Test") continue;
+                for tc: typechecked.procedure_headers
+                {
+                    proc := tc.expression;
+                    if !has_note(proc, "Test") continue;
 
-                array_add(*test_procs, proc);
-            }
+                    array_add(*test_procs, proc);
+                }
 
             case .PHASE;
-            phase := cast(*Message_Phase) message;
-            if phase.phase ==
-            {
-                case .TYPECHECKED_ALL_WE_CAN;
-                if test_procs.count == 0 continue;
-
-                tests: [..] Test;
-
-                for proc: test_procs
+                phase := cast(*Message_Phase) message;
+                if phase.phase ==
                 {
-                    test := Test.{
-                        name = proc.name,
-                        location = .{
-                            fully_pathed_filename = proc.enclosing_load.fully_pathed_filename,
-                            line_number = proc.l0,
-                            character_number = proc.c0
-                        }
-                    };
+                    case .TYPECHECKED_ALL_WE_CAN;
+                    if test_procs.count == 0 continue;
 
-                    if proc.arguments.count > 0
+                    tests: [..] Test;
+
+                    for proc: test_procs
                     {
-                        add_parameterized_tests(proc, test, *tests, param_arrs);
-                    }
-                    else array_add(*tests, test);
-                }
+                        test := Test.{
+                            name = proc.name,
+                            location = .{
+                                fully_pathed_filename = proc.enclosing_load.fully_pathed_filename,
+                                line_number = proc.l0,
+                                character_number = proc.c0
+                            }
+                        };
 
-                add_build_string(create_test_string(tests, builder), message.workspace);
-                test_procs.count = 0;
-            }
+                        if proc.arguments.count > 0
+                        {
+                            add_parameterized_tests(proc, test, *tests, param_arrs);
+                        }
+                        else array_add(*tests, test);
+                    }
+
+                    compare_test_cases :: (a: Test, b: Test) -> int
+                    {
+                        a_loc := a.location;
+                        b_loc := b.location;
+
+                        result := compare_strings(a_loc.fully_pathed_filename, b_loc.fully_pathed_filename);
+                        if result == 0 
+                            result = ifx a_loc.line_number < b_loc.line_number then -1 else 1;
+
+                        return result;
+                    }
+
+                    bubble_sort(tests, compare_test_cases);
+
+                    add_build_string(create_test_string(tests, builder), message.workspace);
+                    test_procs.count = 0;
+                }
 
             case .COMPLETE; break;
         }
@@ -340,6 +324,51 @@ add_parameterized_tests :: (proc: *Code_Procedure_Header, base_test: Test, tests
     }
 }
 
+handle_parameterized_test_case :: (test: Test, run_state: *Test_Run_State)
+{
+    using run_state;
+
+    if param_test_name != test.name flush_parameterized_test_cases(run_state);
+
+    param_test_name = test.name;
+    array_add(*param_test_cases, test);
+}
+
+flush_parameterized_test_cases :: (run_state: *Test_Run_State)
+{
+    using run_state;
+    if param_test_cases.count == 0 return;
+    
+    group_state := Test_State.PASSED;
+
+    for param_test_cases
+    {
+        if it.state ==
+        {
+            case .PASSED; continue;
+            case .UNRUN;  group_state = .UNRUN;
+            case .FAILED;
+                group_state = .FAILED;
+                break;
+        }
+    }
+
+    if group_state ==
+    {
+        case .PASSED; print_passed_test_name (param_test_name, indent_count);
+        case .FAILED; print_failed_test_name (param_test_name, indent_count);
+        case .UNRUN;  print_skipped_test_name(param_test_name, indent_count);
+    }
+
+    for param_test_cases
+    {
+        print_test_case_output(it, run_state);
+    }
+
+    array_reset(*param_test_cases);
+    param_test_name = "";
+}
+
 has_note :: (header: *Code_Procedure_Header, note: string) -> bool
 {
     for header.notes
@@ -362,6 +391,94 @@ prepend_indents :: (str: string, num_indents: int) -> string
     for 0..num_indents-1 print_to_builder(*builder, "    ");
     print_to_builder(*builder, str);
     return builder_to_string(*builder);
+}
+
+print_test_info :: (files: [] string, num_tests: int)
+{
+    print("\nFound % files with % tests.\n\n", files.count, num_tests);
+    print("Included files:\n");
+    for files print(prepend_indents(tprint("- %\n", it), 1));
+}
+
+print_test_output :: (test: Test, run_state: *Test_Run_State)
+{
+    using run_state;
+
+    if test.state ==
+    {
+        case .PASSED;
+            print_passed_test_name(test.name, indent_count);
+        case .FAILED;
+            print_failed_test_name(test.name, indent_count);
+            print_failed_test_expression(test, indent_count + 1);
+            num_failed  += 1;
+        case .UNRUN;
+            print_skipped_test_name(test.name, indent_count);
+            print_skipped_test_reason(indent_count + 1);
+            num_skipped += 1;
+    }
+}
+
+print_test_case_output :: (test: Test, run_state: *Test_Run_State)
+{
+    using run_state;
+    indent_count += 1;
+
+    parameter_name_string := tprint("Parameter index %", test.parameter_index);
+
+    if test.state ==
+    {
+        case .PASSED;
+            print_passed_test_name(parameter_name_string, indent_count);
+        case .FAILED;
+            print_failed_test_name(parameter_name_string, indent_count);
+            print_failed_test_expression(test, indent_count + 1);
+            num_failed  += 1;
+        case .UNRUN;
+            print_skipped_test_name(parameter_name_string, indent_count);
+            print_skipped_test_reason(indent_count + 1);
+            num_skipped += 1;
+    }
+
+    indent_count -= 1;
+}
+
+print_passed_test_name :: (test_name: string, indent_count: int)
+{
+    print_color(prepend_indents("pass: ", indent_count), color = .GREEN);
+    print("%\n", test_name);
+}
+
+print_failed_test_name :: (test_name: string, indent_count: int)
+{
+    print_color(prepend_indents("fail: ", indent_count), color = .RED); 
+    print("%\n", test_name);
+}
+
+print_failed_test_expression :: (test: Test, indent_count: int)
+{
+    print(prepend_indents(tprint("Failing expression (line %): %\n", test.location.line_number, test.failed_expr), indent_count));
+}
+
+print_skipped_test_name :: (test_name: string, indent_count: int)
+{
+    print_color(prepend_indents("skip: ", indent_count), color = .YELLOW); 
+    print("%\n", test_name);
+}
+
+print_skipped_test_reason :: (indent_count: int)
+{
+    print(prepend_indents("Missing a test expression!\n", indent_count));
+}
+
+print_test_summary :: (run_state: Test_Run_State, test_count: int, elapsed_time: int)
+{
+    using run_state;
+
+    print("\nRan % tests in % ms.\n", test_count, elapsed_time);
+    print_color("% ", test_count - num_failed - num_skipped, color = .GREEN); print("passed, ");
+    print_color("% ", num_failed, color = .RED); print("failed, ");
+    print_color("% ", num_skipped, color = .YELLOW); print("skipped.\n\n");
 }
 
 EXEC_STRING :: #string
