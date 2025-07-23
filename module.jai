@@ -13,8 +13,10 @@ build_and_run_tests :: (base_options: Build_Options, test_dir: string, loc := #c
     build_tests(base_options, test_dir, RUN_STRING, loc);
 }
 
-run_tests :: (tests: [] Test)
+run_tests :: (test_files: [] string, tests: [] Test)
 {
+    print_test_info(test_files, tests.count);
+
     run_state := Test_Run_State.{indent_count = 1};
 
     t_start := current_time_monotonic();
@@ -65,23 +67,23 @@ is_false :: ($expr: Code, $call := #caller_code) #expand
     value_is_true(value, call);
 }
 
-// are_equal :: ($actual: Code, $expected: Code, $call := #caller_code) #expand
-// {
-//     actual_value := #insert actual;
-//     expected_value := #insert expected;
-//
-//     value := actual_value == expected_value;
-//     value_is_true(value, call);
-// }
-//
-// are_not_equal :: ($actual: Code, $expected: Code, $call := #caller_code) #expand
-// {
-//     actual_value := #insert actual;
-//     expected_value := #insert expected;
-//
-//     value := actual_value != expected_value;
-//     value_is_true(value, call);
-// }
+are_equal :: ($actual: Code, $expected: Code, comparator: Code = #code ((a, b) => a == b), $call := #caller_code) #expand
+{
+    actual_value := #insert actual;
+    expected_value := #insert expected;
+
+    value := (#insert comparator)(actual_value, expected_value);
+    value_is_true(value, call);
+}
+
+are_not_equal :: ($actual: Code, $expected: Code, comparator: Code = #code ((a, b) => a != b), $call := #caller_code) #expand
+{
+    actual_value := #insert actual;
+    expected_value := #insert expected;
+
+    value := (#insert comparator)(actual_value, expected_value);
+    value_is_true(value, call);
+}
 
 is_null :: ($expr: Code, $call := #caller_code) #expand
 {
@@ -288,7 +290,12 @@ message_loop :: (builder: String_Builder)
 
                         result := compare_strings(a_loc.fully_pathed_filename, b_loc.fully_pathed_filename);
                         if result == 0 
-                            result = ifx a_loc.line_number < b_loc.line_number then -1 else 1;
+                        {
+                            if a_loc.line_number == b_loc.line_number
+                                return ifx a.parameter_index < b.parameter_index then -1 else 1;
+
+                            return ifx a_loc.line_number < b_loc.line_number then -1 else 1;
+                        }
 
                         return result;
                     }
@@ -487,19 +494,13 @@ HERE
 
 main :: ()
 {
-    Verifai.print_test_info(test_files, tests.count);
-    Verifai.run_tests(tests);
+    Verifai.run_tests(test_files, tests);
 }
 HERE
 
 RUN_STRING :: #string
 HERE
-#run
-{
-    #import "Verifai";
-    print_test_info(test_files, tests.count);
-    run_tests(tests);
-}
+#run Verifai.run_tests(test_files, tests);
 HERE
 
 #import "Basic";
