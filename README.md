@@ -64,7 +64,7 @@ silly_test_proc :: ()
 {
     val := null;
     Verifai.is_not_null(val);
-}
+} @Test
 
 test_not_test_proc :: ()
 {
@@ -74,7 +74,7 @@ Verifai :: #import "Verifai";
 ```
 
 Output:
-```sh
+```
 Found 1 files with 7 tests.
 
 Included files:
@@ -156,7 +156,7 @@ Verifai :: #import "Verifai";
 ```
 
 Output:
-```sh
+```
 Found 1 files with 6 tests.
 
 Included files:
@@ -191,3 +191,4 @@ Please consider checking these out if this module doesn't fit your use case!
 
 ## TODO
 - Print expression & parameter values in test output
+- Add @Setup and @Teardown feature
