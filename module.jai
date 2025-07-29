@@ -58,6 +58,8 @@ run_tests :: (test_files: [] string, tests: [] Test, setup_info: [] Setup_Teardo
         }
     }
 
+    flush_parameterized_test_cases(*run_state);
+
     t_stop := current_time_monotonic();
     elapsed_time := to_milliseconds(t_stop - t_start, false);
 
