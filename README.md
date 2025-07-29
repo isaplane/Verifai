@@ -15,6 +15,48 @@ Files with tests live in a single directory (specified in build file).
 See the build_test_runner.jai and build_test_executable.jai files for examples on how to build for compile-time or standalone testing.
 The build_test_runner.jai can be added to any build file by simply using the \#load directive.
 
+### Setup and teardown procedures
+To use setup and teardown procedures, tag one procedure per file with either @Setup or @Teardown.
+These procedures will run before and after every test, respectively.
+
+The setup procedure signature must include a return value of Any (although it does not need to be used by your tests). 
+A custom struct can be defined and returned from the setup procedure as an Any type, which is stored in the `context.setup_data` field (reinitialized for each test).
+This data does not need to be allocated on the heap.
+Setup can also be used to initialize global- or file-scoped variables.
+
+The teardown procedure must accept an Any type, which is the same data that is returned from the setup procedure.
+
+Note that there are no naming restrictions for the setup/teardown procs, or the setup data struct.
+
+Example:
+```jai
+Setup_Data :: struct
+{
+    str: string;
+    num: int;
+}
+
+setup_test :: () -> Any
+{
+    return Setup_Data.{
+        str = "Hello, Sailor!\n",
+        num = 10
+    };
+} @Setup
+
+teardown_test :: (setup_data: Any)
+{
+} @Teardown
+
+setup_teardown_test :: ()
+{
+    setup := context.setup_data.value_pointer.(*Setup_Data);
+
+    val := 10;
+    Verifai.are_equal(val, setup.num);
+} @Test
+```
+
 
 ### Non-parameterized tests
 Defined with no parameters or return types, and tagged with a @Test note.
@@ -191,4 +233,3 @@ Please consider checking these out if this module doesn't fit your use case!
 
 ## TODO
 - Print expression & parameter values in test output
-- Add @Setup and @Teardown feature
