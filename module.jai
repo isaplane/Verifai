@@ -13,7 +13,7 @@ build_and_run_tests :: (base_options: Build_Options, test_dir: string, loc := #c
     build_tests(base_options, test_dir, RUN_STRING, loc);
 }
 
-run_tests :: (test_files: [] string, tests: [] Test)
+run_tests :: (test_files: [] string, tests: [] Test, setup_info: [] Setup_Teardown_Info)
 {
     print_test_info(test_files, tests.count);
 
@@ -24,21 +24,30 @@ run_tests :: (test_files: [] string, tests: [] Test)
     print("\n");
     for tests
     {
+        path := it.location.fully_pathed_filename;
+        current_setup: *Setup_Teardown_Info;
+
+        if path != run_state.current_file
+        {
+            flush_parameterized_test_cases(*run_state);
+            print("\n%:\n", path);
+            run_state.current_file = path;
+
+            current_setup = find_setup_info(path, setup_info);
+        }
+
         new_context := context;
         new_context.test_case = *it;
+        if current_setup != null && current_setup.setup_proc != null
+            new_context.setup_data = current_setup.setup_proc();
 
         push_context new_context
         {
             it.proc();
         }
 
-        path := it.location.fully_pathed_filename;
-        if path != run_state.current_file
-        {
-            flush_parameterized_test_cases(*run_state);
-            print("\n%:\n", path);
-            run_state.current_file = path;
-        }
+        if current_setup != null && current_setup.teardown_proc != null
+            current_setup.teardown_proc(new_context.setup_data);
 
         if it.is_parameterized 
             handle_parameterized_test_case(it, *run_state); 
@@ -115,6 +124,16 @@ Test :: struct
 }
 #add_context test_case: *Test;
 
+#add_context setup_data: Any;
+Setup_Teardown_Info :: struct
+{
+    file: string;
+    setup_proc_name: string;
+    setup_proc: #type () -> Any;
+    teardown_proc_name: string;
+    teardown_proc: #type (Any);
+}
+
 #scope_module
 
 Test_State :: enum
@@ -184,6 +203,13 @@ find_test_files :: (test_dir: string) -> [] string
     return files;
 }
 
+find_setup_info :: (file: string, setup_info: [] Setup_Teardown_Info) -> *Setup_Teardown_Info
+{
+    for setup_info if it.file == file return *it;
+
+    return null;
+}
+
 create_test_file_string :: (test_files: [] string, builder: String_Builder) -> string
 {
     print_to_builder(*builder, "test_files: [%] string = \n", test_files.count);
@@ -197,9 +223,26 @@ create_test_file_string :: (test_files: [] string, builder: String_Builder) -> s
     return builder_to_string(*builder);
 }
 
+create_setup_string :: (info: [] Setup_Teardown_Info, builder: String_Builder) -> string
+{
+    print_to_builder(*builder, "setup_info: [%] Verifai.Setup_Teardown_Info =\n", info.count);
+    print_to_builder(*builder, ".[\n");
+    for info
+    {
+        print_to_builder(*builder, 
+            "    .{file = \"%\", setup_proc = %, teardown_proc = %},\n", 
+            it.file,
+            ifx it.setup_proc_name != "" then it.setup_proc_name else "null",
+            ifx it.teardown_proc_name != "" then it.teardown_proc_name else "null");
+    }
+
+    print_to_builder(*builder, "];\n");
+    return builder_to_string(*builder);
+}
+
 create_test_string :: (tests: [] Test, builder: String_Builder) -> string
 {
-    print_to_builder(*builder, "tests: [%] Verifai.Test = \n", tests.count);
+    print_to_builder(*builder, "tests: [%] Verifai.Test =\n", tests.count);
     print_to_builder(*builder, ".[\n");
     for tests
     {
@@ -212,8 +255,8 @@ create_test_string :: (tests: [] Test, builder: String_Builder) -> string
 
         print_to_builder(*builder, "    .{name = \"%\", proc = () => %(), location = .%},\n", it.name, it.name, it.location);
     }
-    print_to_builder(*builder, "];\n");
 
+    print_to_builder(*builder, "];\n");
     return builder_to_string(*builder);
 }
 
@@ -221,6 +264,10 @@ message_loop :: (builder: String_Builder)
 {
     test_procs: [..] *Code_Procedure_Header;
     param_arrs: [..] Param_Array_Info;
+
+    setup_info: [..] Setup_Teardown_Info;
+    setup_seen: [..] string;
+    teardown_seen: [..] string;
 
     while true
     {
@@ -251,9 +298,33 @@ message_loop :: (builder: String_Builder)
                 for tc: typechecked.procedure_headers
                 {
                     proc := tc.expression;
-                    if !has_note(proc, "Test") continue;
 
-                    array_add(*test_procs, proc);
+                    if has_note(proc, "Setup")
+                    {
+                        path := proc.enclosing_load.fully_pathed_filename;
+                        assert(!array_contains_string(*setup_seen, path), "More than one @Setup found in file: %\n", path);
+
+                        array_add(*setup_seen, path);
+
+                        info := find_or_add_setup_info(path, *setup_info);
+                        info.setup_proc_name = proc.name;
+                    }
+
+                    if has_note(proc, "Teardown")
+                    {
+                        path := proc.enclosing_load.fully_pathed_filename;
+                        assert(!array_contains_string(*teardown_seen, path), "More than one @Teardown found in file: %\n", path);
+
+                        array_add(*teardown_seen, path);
+
+                        info := find_or_add_setup_info(path, *setup_info);
+                        info.teardown_proc_name = proc.name;
+                    }
+
+                    if has_note(proc, "Test")
+                    {
+                        array_add(*test_procs, proc);
+                    }
                 }
 
             case .PHASE;
@@ -264,7 +335,6 @@ message_loop :: (builder: String_Builder)
                     if test_procs.count == 0 continue;
 
                     tests: [..] Test;
-
                     for proc: test_procs
                     {
                         test := Test.{
@@ -301,9 +371,10 @@ message_loop :: (builder: String_Builder)
                     }
 
                     bubble_sort(tests, compare_test_cases);
-
-                    add_build_string(create_test_string(tests, builder), message.workspace);
                     test_procs.count = 0;
+
+                    add_build_string(create_setup_string(setup_info, builder), message.workspace);
+                    add_build_string(create_test_string(tests, builder), message.workspace);
                 }
 
             case .COMPLETE; break;
@@ -381,6 +452,15 @@ has_note :: (header: *Code_Procedure_Header, note: string) -> bool
     for header.notes
         if it.text == note return true;
     return false;
+}
+
+find_or_add_setup_info :: (file: string, info: *[..] Setup_Teardown_Info) -> *Setup_Teardown_Info
+{
+    for info.* if it.file == file return *it;
+
+    temp := Setup_Teardown_Info.{file = file};
+    array_add(info, temp);
+    return *info.data[info.count - 1];
 }
 
 get_expression :: (call := #caller_code) -> string
@@ -488,19 +568,29 @@ print_test_summary :: (run_state: Test_Run_State, test_count: int, elapsed_time:
     print_color("% ", num_skipped, color = .YELLOW); print("skipped.\n\n");
 }
 
+array_contains_string :: (arr: *[] string, target: string) -> bool
+{
+    for arr.*
+    {
+        if it == target return true;
+    }
+    
+    return false;
+}
+
 EXEC_STRING :: #string
 HERE
 #import "Basic";
 
 main :: ()
 {
-    Verifai.run_tests(test_files, tests);
+    Verifai.run_tests(test_files, tests, setup_info);
 }
 HERE
 
 RUN_STRING :: #string
 HERE
-#run Verifai.run_tests(test_files, tests);
+#run Verifai.run_tests(test_files, tests, setup_info);
 HERE
 
 #import "Basic";
