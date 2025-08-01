@@ -199,7 +199,7 @@ value_is_true :: (value: bool, $call := #caller_code)
 
 find_test_files :: (test_dir: string) -> [] string
 {
-    files := file_list(test_dir);
+    files := file_list(test_dir, recursive = true);
     assert(files.count > 0, "Couldn't find files in test directory.");
 
     return files;
