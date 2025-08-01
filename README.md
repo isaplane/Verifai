@@ -8,6 +8,7 @@ A(nother) unit testing module for Jai.
 - Colorized output
 - Tests can be run at compile time (as part of normal build) or as a separate executable for debugging
 - Test execution does not stop on failing test
+- Tests can have multiple asserts. Test is marked as failing if any assert fails.
 
 ## Usage
 Files with tests live in a single directory (specified in build file).

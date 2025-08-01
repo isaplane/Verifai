@@ -186,6 +186,10 @@ value_is_true :: (value: bool, $call := #caller_code)
 {
     using context.test_case;
 
+    // Return early if an assert has already failed in the test!
+    // Maybe later I can add support for tracking multiple failing asserts in a single test. 
+    if state == .FAILED return;
+
     if value 
     {
         state = .PASSED;
