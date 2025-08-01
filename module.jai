@@ -284,13 +284,33 @@ message_loop :: (builder: String_Builder)
                     decl := dc.expression;
                     if decl.type_inst == null continue;
 
-                    if (decl.flags & .IS_GLOBAL) &&
-                        (decl.type_inst.result.type == .ARRAY) &&
-                        (decl.type_inst.array_element_type.result.type == .STRUCT)
+                    is_array_of_structs := (decl.type_inst.result.type == .ARRAY) && (decl.type_inst.array_element_type.result.type == .STRUCT);
+                    if (decl.flags & .IS_GLOBAL) && is_array_of_structs
                     {
+                        count := decl.type_inst.result.(*Type_Info_Array).array_count;
+
+                        expr_node := decl.expression;
+                        if count == -1 && expr_node
+                        {
+                            if expr_node.kind == .CAST
+                            {
+                                cast_node := cast(*Code_Cast) expr_node;
+                                expr_node = cast_node.expression;
+                            }
+
+                            if expr_node.kind == .LITERAL
+                            {
+                                literal := cast(*Code_Literal) expr_node;
+                                if literal.value_type == .ARRAY && literal.array_literal_info
+                                    count = literal.array_literal_info.array_members.count;
+                            }
+                        }
+                        
+                        if count == 0 continue;
+
                         arr_info := Param_Array_Info.{
                             name = decl.name,
-                            count = decl.type_inst.result.(*Type_Info_Array).array_count,
+                            count = count,
                             element_type = get_type(decl.type_inst.array_element_type.result)
                         };
                         array_add(*param_arrs, arr_info);
