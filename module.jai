@@ -18,6 +18,7 @@ run_tests :: (test_files: [] string, tests: [] Test, setup_info: [] Setup_Teardo
     print_test_info(test_files, tests.count);
 
     run_state := Test_Run_State.{indent_count = 1};
+    current_setup: *Setup_Teardown_Info;
 
     t_start := current_time_monotonic();
 
@@ -25,7 +26,6 @@ run_tests :: (test_files: [] string, tests: [] Test, setup_info: [] Setup_Teardo
     for tests
     {
         path := it.location.fully_pathed_filename;
-        current_setup: *Setup_Teardown_Info;
 
         if path != run_state.current_file
         {
