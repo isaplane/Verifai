@@ -20,12 +20,11 @@ The build_test_runner.jai can be added to any build file by simply using the \#l
 To use setup and teardown procedures, tag one procedure per file with either @Setup or @Teardown.
 These procedures will run before and after every test, respectively.
 
-The setup procedure signature must include a return value of Any (although it does not need to be used by your tests). 
-A custom struct can be defined and returned from the setup procedure as an Any type, which is stored in the `context.setup_data` field (reinitialized for each test).
-This data does not need to be allocated on the heap.
+The setup procedure signature must accept no parameters and return nothing. 
+A custom struct can be defined and stored in the `context.setup_data: *void` field (reinitialized for each test).
 Setup can also be used to initialize global- or file-scoped variables.
 
-The teardown procedure must accept an Any type, which is the same data that is returned from the setup procedure.
+The teardown procedure must also accept no parameters and return no values.
 
 Note that there are no naming restrictions for the setup/teardown procs, or the setup data struct.
 
@@ -37,21 +36,25 @@ Setup_Data :: struct
     num: int;
 }
 
-setup_test :: () -> Any
+setup_test :: ()
 {
-    return Setup_Data.{
+    setup := New(Setup_Data);
+    setup.* = .{
         str = "Hello, Sailor!\n",
         num = 10
     };
+
+    context.setup_data = setup;
 } @Setup
 
-teardown_test :: (setup_data: Any)
+teardown_test :: ()
 {
+    free(context.setup_data);
 } @Teardown
 
 setup_teardown_test :: ()
 {
-    setup := context.setup_data.value_pointer.(*Setup_Data);
+    setup := context.setup_data.(*Setup_Data);
 
     val := 10;
     Verifai.are_equal(val, setup.num);

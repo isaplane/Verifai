@@ -38,16 +38,14 @@ run_tests :: (test_files: [] string, tests: [] Test, setup_info: [] Setup_Teardo
 
         new_context := context;
         new_context.test_case = *it;
-        if current_setup != null && current_setup.setup_proc != null
-            new_context.setup_data = current_setup.setup_proc();
-
         push_context new_context
         {
+            if current_setup && current_setup.setup_proc
+                current_setup.setup_proc();
             it.proc();
+            if current_setup && current_setup.teardown_proc
+                current_setup.teardown_proc();
         }
-
-        if current_setup != null && current_setup.teardown_proc != null
-            current_setup.teardown_proc(new_context.setup_data);
 
         if it.is_parameterized 
             handle_parameterized_test_case(it, *run_state); 
@@ -126,14 +124,14 @@ Test :: struct
 }
 #add_context test_case: *Test;
 
-#add_context setup_data: Any;
+#add_context setup_data: *void;
 Setup_Teardown_Info :: struct
 {
     file: string;
     setup_proc_name: string;
-    setup_proc: #type () -> Any;
+    setup_proc: #type ();
     teardown_proc_name: string;
-    teardown_proc: #type (Any);
+    teardown_proc: #type ();
 }
 
 #scope_module
