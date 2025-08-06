@@ -604,7 +604,7 @@ array_contains_string :: (arr: *[] string, target: string) -> bool
 
 EXEC_STRING :: #string
 HERE
-#import "Basic";
+Verifai :: #import "Verifai";
 
 main :: ()
 {
@@ -614,7 +614,10 @@ HERE
 
 RUN_STRING :: #string
 HERE
-#run Verifai.run_tests(test_files, tests, setup_info);
+Verifai :: #import "Verifai";
+#run {
+    Verifai.run_tests(test_files, tests, setup_info);
+}
 HERE
 
 #import "Basic";
